@@ -2,6 +2,9 @@
 
 ## Overview
 
+The uLogger embedded agent works in combination with uLogger cloud. After integration of the agent library, you must add a step to your build job to publish the AXF file to uLogger 
+Cloud. For more information on that, follow the [Upload Example](https://github.com/ulogger-ai/example_upload)
+
 uLogger is an embedded logging library with support for:
 - **Runtime logging** with configurable debug modules and levels
 - **Crash dump capture** using ARM CrashCatcher for hard fault analysis
