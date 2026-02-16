@@ -105,7 +105,7 @@ static ulogger_config_t g_ulogger_config = {
         .level = ULOG_DEBUG,           // Minimum level to log
     },
     .mcb_param = ulogger_mem_ctl_block,
-    .mcb_len = sizeof(ulogger_mem_ctl_block) / sizeof(mem_ctl_block_t),
+    .mcb_len = sizeof(ulogger_mem_ctl_block),
     .pretrigger_log_count = PRETRIGGER_LOG_COUNT,
     .pretrigger_buffer = pretrigger_buffer,
     .pretrigger_buffer_size = sizeof(pretrigger_buffer),
