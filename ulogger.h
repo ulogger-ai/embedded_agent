@@ -13,6 +13,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdarg.h>
 #include "ulogger_mem.h"
 #include "ulogger_config.h"
 #include "ulogger_debug_modules.h"
@@ -49,17 +50,23 @@ typedef struct {
     uint8_t level;    // Minimum log level threshold
 } ulogger_flags_level_t;
 
+typedef enum {
+    ULOGGER_STACK_TYPE_MSP = 0,
+    ULOGGER_STACK_TYPE_PSP = 1
+} ulogger_stack_type_t;
+
 /**
- * @brief Configuration structure for ulogger system (for crash handler)
+ * @brief Configuration structure for uLogger system (for crash handler)
  */
 typedef struct {
-    uint32_t stack_top_address;         // Top of stack for crash dumps
-    ulogger_flags_level_t flags_level;  // Flags and level configuration
-    const mem_ctl_block_t *mcb_param;   // Memory control block array
-    uint32_t mcb_len;                   // Length of memory control block array
-    uint16_t pretrigger_log_count;      // Number of pretrigger logs to keep in buffer
-    uint8_t *pretrigger_buffer;         // Pointer to pretrigger buffer (user-allocated)
-    uint16_t pretrigger_buffer_size;    // Size of pretrigger buffer in bytes
+    void((*fault_reboot_cb)(void));  // callback to execute after a crash is captured. 
+    const void*(*stack_top_address_cb)(ulogger_stack_type_t stack_type);  // Top of stack for crash dumps
+    ulogger_flags_level_t flags_level; // Flags and level configuration
+    const mem_ctl_block_t *mcb_param; // Memory control block array
+    uint32_t mcb_len;           // Length of memory control block array
+    uint16_t pretrigger_log_count; // Number of pretrigger logs to keep in buffer
+    uint8_t *pretrigger_buffer;  // Pointer to pretrigger buffer (user-allocated)
+    uint16_t pretrigger_buffer_size; // Size of pretrigger buffer in bytes
     
     // Crash dump header metadata
     uint32_t application_id;        // Application identifier
@@ -127,21 +134,25 @@ uint32_t ulogger_get_nv_log_usage(void);
 uint32_t ulogger_get_core_dump_size(void);
 
 /**
- * @brief Read NV logs with 13-byte header prepended
+ * @brief Read NV logs with 13-byte header prepended, with support for chunked reads
  * 
- * This function simplifies log transmission by automatically prepending a 13-byte
- * header containing metadata (version, session token, sequence number, size, checksum)
- * before the log data. The header format matches the protocol expected by ulogger_extract.py.
+ * The complete output is a logical stream composed of a 13-byte header followed by
+ * the raw NV log data. Applications that cannot hold the entire stream in RAM can
+ * call this function repeatedly, advancing read_offset by the number of bytes
+ * returned each time, until 0 is returned.
  * 
- * @param dest Destination buffer (must be at least 13 + log data size bytes)
- * @param max_bytes Maximum bytes to write to dest
- * @param session_token Session identifier to include in header (typically from cloud/server)
- * @return Total bytes written (header + log data), or 0 if no logs available
+ * @param dest         Destination buffer to write into
+ * @param max_bytes    Maximum bytes to write to dest
+ * @param session_token Session identifier included in the header (only relevant when
+ *                     read_offset < 13, i.e. the header is being read)
+ * @param read_offset  Byte offset into the logical stream [header | log data] to start
+ *                     reading from. Pass 0 on the first call.
+ * @return Number of bytes written to dest, or 0 if no logs available or read_offset
+ *         is at/past the end of the stream.
  * 
- * @note The returned size includes both the 13-byte header and log data.
- *       Call ulogger_get_nv_log_usage() first to determine the required buffer size.
+ * @note Call ulogger_get_nv_log_usage() to obtain the total stream length.
  */
-uint32_t ulogger_read_nv_logs_with_header(void *dest, uint32_t max_bytes, uint32_t session_token);
+uint32_t ulogger_read_nv_logs_with_header(void *dest, uint32_t max_bytes, uint32_t session_token, uint32_t read_offset);
 
 /**
  * @brief Flush all pretrigger logs to NV memory
@@ -197,6 +208,48 @@ bool ulogger_nv_mem_write(uint32_t address, const uint8_t *data, uint32_t size);
  * @return true on success, false on error
  */
 bool ulogger_nv_mem_erase(uint32_t address, uint32_t size);
+
+/**
+ * @brief Register a local log callback
+ * 
+ * This function allows the user to register a callback function that will be
+ * called whenever a log message is generated. The callback receives the format
+ * string and the variable argument list, allowing the user to handle log
+ * messages in a custom manner (e.g., printing to a console or storing in a
+ * custom buffer).
+ * 
+ * @param callback Pointer to the callback function to register
+ */
+void register_local_log_callback(void (*callback)(uint32_t debug_module, uint8_t debug_level, const char *fmt, va_list args));
+
+/**
+ * @brief Assert failure handler — logs file/line and triggers a core dump
+ *
+ * This function is called by the ULOGGER_ASSERT() macro when the assertion
+ * condition evaluates to false. It logs the file name and line number at
+ * ULOG_CRITICAL level, then captures a full core dump.
+ *
+ * @param file Source file name (provided by __FILE__)
+ * @param line Source line number (provided by __LINE__)
+ *
+ * @note This function does not return.
+ */
+void ulogger_assert_fail(const char *file, int line);
+
+/**
+ * @brief Assert macro that logs file/line and captures a core dump on failure
+ *
+ * Usage:
+ * @code
+ * ULOGGER_ASSERT(ptr != NULL);
+ * ULOGGER_ASSERT(index < MAX_SIZE);
+ * @endcode
+ *
+ * When the condition is false, the macro logs the assertion location and
+ * triggers CrashCatcher to produce a core dump for post-mortem analysis.
+ */
+#define ULOGGER_ASSERT(cond) \
+    do { if (!(cond)) { ulogger_assert_fail(__FILE__, __LINE__); } } while (0)
 
 #ifdef __cplusplus
 }

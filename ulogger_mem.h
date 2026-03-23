@@ -122,6 +122,13 @@ bool Mem_erase(mem_type_t type, uint32_t offset, uint32_t len);
  */
 bool Mem_erase_all(mem_type_t type);
 
+/**
+ * @brief Get the total size of a memory region
+ * @param type Memory type to query
+ * @return Size in bytes of the region, or 0 if the type is not configured
+ */
+uint32_t Mem_get_size(mem_type_t type);
+
 #ifdef __cplusplus
 }
 #endif

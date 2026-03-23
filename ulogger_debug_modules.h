@@ -4,12 +4,11 @@
 /**
  * @file ulogger_debug_modules.h
  * @brief Debug module table generation for uLogger
- * 
- * This file should not be modified by the user.
  *
  * This header generates both enum values and a flash-resident table
  * of debug modules that can be extracted from the ELF file.
  *
+ * Users must define ULOGGER_DEBUG_MODULE_LIST(X) before including this header.
  */
 
 typedef struct {
