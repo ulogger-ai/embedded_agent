@@ -67,6 +67,10 @@ typedef struct {
     uint16_t pretrigger_log_count; // Number of pretrigger logs to keep in buffer
     uint8_t *pretrigger_buffer;  // Pointer to pretrigger buffer (user-allocated)
     uint16_t pretrigger_buffer_size; // Size of pretrigger buffer in bytes
+
+    // Timestamp configuration
+    uint32_t (*get_tick)(void);    // User-provided callback returning current tick count (raw hardware ticks)
+    uint32_t tick_rate_hz;         // Tick rate in Hz (e.g. 32768 for a 32.768 kHz RTC)
     
     // Crash dump header metadata
     uint32_t application_id;        // Application identifier
@@ -119,10 +123,10 @@ void ulogger_clear_nv_logs(void);
 
 /**
  * @brief Get current non-volatile log buffer usage in bytes
- * @return Total bytes needed for transmission (13-byte header + log data), or 0 if no logs
+ * @return Total bytes needed for transmission (17-byte header + log data), or 0 if no logs
  * 
  * @note This function returns the total size required for buffer allocation when using
- *       ulogger_read_nv_logs_with_header(). The returned size includes both the 13-byte
+ *       ulogger_read_nv_logs_with_header(). The returned size includes both the 17-byte
  *       header and the actual log data.
  */
 uint32_t ulogger_get_nv_log_usage(void);
@@ -134,9 +138,9 @@ uint32_t ulogger_get_nv_log_usage(void);
 uint32_t ulogger_get_core_dump_size(void);
 
 /**
- * @brief Read NV logs with 13-byte header prepended, with support for chunked reads
+ * @brief Read NV logs with 17-byte header prepended, with support for chunked reads
  * 
- * The complete output is a logical stream composed of a 13-byte header followed by
+ * The complete output is a logical stream composed of a 17-byte header followed by
  * the raw NV log data. Applications that cannot hold the entire stream in RAM can
  * call this function repeatedly, advancing read_offset by the number of bytes
  * returned each time, until 0 is returned.
@@ -144,7 +148,7 @@ uint32_t ulogger_get_core_dump_size(void);
  * @param dest         Destination buffer to write into
  * @param max_bytes    Maximum bytes to write to dest
  * @param session_token Session identifier included in the header (only relevant when
- *                     read_offset < 13, i.e. the header is being read)
+ *                     read_offset < 17, i.e. the header is being read)
  * @param read_offset  Byte offset into the logical stream [header | log data] to start
  *                     reading from. Pass 0 on the first call.
  * @return Number of bytes written to dest, or 0 if no logs available or read_offset
