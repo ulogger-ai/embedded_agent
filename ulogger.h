@@ -35,8 +35,15 @@ enum ULOGGER_DEBUG_LEVEL {
     ULOG_WARNING,        // Warning conditions
     ULOG_ERROR,          // Error conditions
     ULOG_CRITICAL,       // Critical failures
-    ULOG_INVALID = 5     // Invalid/unused level
+    ULOG_METRIC,         // Metric data (always persisted to NV)
+    ULOG_INVALID         // Invalid/unused level
 };
+
+// Module mask sentinel for "always log, regardless of configured module flags".
+// Pass as the debug_module argument to ulogger_log().
+#ifndef ULOG_ALWAYS
+#define ULOG_ALWAYS 0x80000000u
+#endif
 
 // ============================================================================
 // Public API Types
@@ -62,7 +69,7 @@ typedef struct {
     void((*fault_reboot_cb)(void));  // callback to execute after a crash is captured. 
     const void*(*stack_top_address_cb)(ulogger_stack_type_t stack_type);  // Top of stack for crash dumps
     ulogger_flags_level_t flags_level; // Flags and level configuration
-    const mem_ctl_block_t *mcb_param; // Memory control block array
+    const ulogger_mem_ctl_block_t *mcb_param; // Memory control block array
     uint32_t mcb_len;           // Length of memory control block array
     uint16_t pretrigger_log_count; // Number of pretrigger logs to keep in buffer
     uint8_t *pretrigger_buffer;  // Pointer to pretrigger buffer (user-allocated)
@@ -87,12 +94,13 @@ typedef struct {
 /**
  * @brief Initialize the uLogger system
  * @param config Pointer to uLogger configuration structure
- * 
+ * @return true on success, false if config is NULL
+ *
  * This function must be called once during application initialization before
  * using any logging functions. It initializes the memory subsystem, pretrigger
  * buffer, and crash dump infrastructure.
  */
-void ulogger_init(ulogger_config_t *config);
+bool ulogger_init(ulogger_config_t *config);
 
 /**
  * @brief Main logging function
@@ -108,10 +116,10 @@ void ulogger_log(uint32_t debug_module, uint8_t debug_level, const char *fmt, ..
  * @param flags_level Pointer to flags/level configuration structure
  * 
  * @note Before calling this function, you must initialize the memory subsystem
- *       by calling Mem_init() with your memory control block configuration.
+ *       by calling ulogger_mem_init() with your memory control block configuration.
  *       Example:
  *       @code
- *       Mem_init(ulogger_mem_ctl_block, sizeof(ulogger_mem_ctl_block));
+ *       ulogger_mem_init(ulogger_mem_ctl_block, sizeof(ulogger_mem_ctl_block));
  *       @endcode
  */
 void ulogger_set_flags_level(ulogger_flags_level_t *flags_level);
@@ -239,6 +247,44 @@ void register_local_log_callback(void (*callback)(uint32_t debug_module, uint8_t
  * @note This function does not return.
  */
 void ulogger_assert_fail(const char *file, int line);
+
+// ============================================================================
+// Metric API
+// ============================================================================
+
+/**
+ * @brief Record a named metric value.
+ *
+ * @param name   Metric name string (no spaces, no '=')
+ * @param type   f = float/double,  i = signed integer,  u = unsigned integer
+ * @param value  The metric value expression
+ *
+ * Example:
+ * @code
+ *   ULOGGER_METRIC("battery_mv", f, voltage);
+ *   ULOGGER_METRIC("rssi",       i, rssi_dbm);
+ *   ULOGGER_METRIC("packets_rx", u, rx_count);
+ * @endcode
+ */
+void ulogger_metric_f(const char *name, double value);
+void ulogger_metric_i(const char *name, int32_t value);
+void ulogger_metric_u(const char *name, uint32_t value);
+
+#define ULOGGER_METRIC(name, type, value)  ulogger_metric_##type((name), (value))
+
+/**
+ * @brief Emit a heartbeat metric.
+ *
+ * Records that the device is alive. The platform uses heartbeat presence to
+ * determine which devices are currently active.
+ *
+ * Required: call at least once per day. Calling more often is fine.
+ *
+ * Expands to a single ulogger_log() call with a literal format string and
+ * no runtime arguments, producing a 6-byte payload (plus frame header).
+ */
+#define ulogger_heartbeat() \
+    ulogger_log(ULOG_ALWAYS, ULOG_METRIC, "metric_heartbeat=1")
 
 /**
  * @brief Assert macro that logs file/line and captures a core dump on failure
