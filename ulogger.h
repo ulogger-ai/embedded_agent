@@ -133,6 +133,28 @@ void ulogger_set_flags_level(ulogger_flags_level_t *flags_level);
 void ulogger_clear_nv_logs(void);
 
 /**
+ * @brief Freeze the current NV log contents as the payload for one transfer.
+ *
+ * Call before ulogger_get_nv_log_usage() and
+ * ulogger_read_nv_logs_with_header() so the reported size, the buffer header
+ * and the trailing gap all describe the same snapshot. Frames logged after this
+ * call are excluded from the transfer and survive ulogger_consume_nv_logs().
+ *
+ * @return Total transfer size (header + log data + trailer), or 0 if empty.
+ */
+uint32_t ulogger_seal_nv_logs_for_transfer(void);
+
+/**
+ * @brief Discard the sealed snapshot after it has been delivered.
+ *
+ * Prefer this over ulogger_clear_nv_logs() on the transfer-complete path:
+ * clearing erases the whole region and destroys entries written while the
+ * transfer was in flight. Flash is erased only when the region drains or runs
+ * low on free space.
+ */
+void ulogger_consume_nv_logs(void);
+
+/**
  * Size in bytes of the buffer header serialized by ulogger_read_nv_logs_with_header(),
  * i.e. the number of leading bytes in that function's output before the raw log data
  * begins. Use this to size a fixed/static header-only buffer instead of hardcoding a
