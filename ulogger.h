@@ -155,6 +155,23 @@ uint32_t ulogger_seal_nv_logs_for_transfer(void);
 void ulogger_consume_nv_logs(void);
 
 /**
+ * @brief Report NV log-store statistics
+ *
+ * Diagnostics for an integration that wants to see how the log store is
+ * behaving. Any pointer may be NULL.
+ *
+ * @param pending_bytes  Bytes not yet consumed by a completed transfer
+ * @param write_offset   Current append position within the region
+ * @param dropped_bytes  Cumulative bytes discarded because space had to be
+ *                       reclaimed without room to relocate them. Non-zero means
+ *                       log data was lost -- typically a region with no usable
+ *                       erase_granularity, so only a whole-region erase is
+ *                       available.
+ */
+void ulogger_get_nv_stats(uint32_t *pending_bytes, uint32_t *write_offset,
+                          uint32_t *dropped_bytes);
+
+/**
  * Size in bytes of the buffer header serialized by ulogger_read_nv_logs_with_header(),
  * i.e. the number of leading bytes in that function's output before the raw log data
  * begins. Use this to size a fixed/static header-only buffer instead of hardcoding a
