@@ -197,6 +197,36 @@ uint32_t ulogger_get_nv_log_usage(void);
 uint32_t ulogger_get_core_dump_size(void);
 
 /**
+ * @brief Why the crash dump handler was entered
+ *
+ * Recorded in every crash dump so that a capture taken from a non-fault context is not
+ * indistinguishable from a genuine CPU fault. A watchdog early-warning interrupt that branches
+ * into the fault handler, for instance, leaves the fault status registers clear, which is only
+ * weak evidence of what happened; this says so outright.
+ *
+ * ULOGGER_CRASH_CAUSE_FAULT is the default and is what a dump reports unless
+ * ulogger_crash_set_cause() is called.
+ */
+enum ULOGGER_CRASH_CAUSE {
+    ULOGGER_CRASH_CAUSE_FAULT    = 0,  // CPU took a fault
+    ULOGGER_CRASH_CAUSE_WATCHDOG = 1,  // hardware watchdog early-warning interrupt
+    ULOGGER_CRASH_CAUSE_ASSERT   = 2,  // failed assertion
+    ULOGGER_CRASH_CAUSE_APP_WDG  = 3,  // application-level liveness check
+};
+
+/**
+ * @brief Record why the crash dump handler is about to be entered
+ *
+ * Call this immediately before branching to HardFault_Handler from a non-fault context, such as a
+ * watchdog early-warning ISR. The value is written into the next crash dump and then reset to
+ * ULOGGER_CRASH_CAUSE_FAULT, so it can never be applied to a later genuine fault. It also starts
+ * at ULOGGER_CRASH_CAUSE_FAULT after every reset.
+ *
+ * @param cause One of ULOGGER_CRASH_CAUSE
+ */
+void ulogger_crash_set_cause(uint8_t cause);
+
+/**
  * @brief Read NV logs with header prepended, with support for chunked reads
  *
  * The complete output is a logical stream composed of the buffer header
