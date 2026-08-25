@@ -70,7 +70,7 @@ typedef struct {
     const void*(*stack_top_address_cb)(ulogger_stack_type_t stack_type);  // Top of stack for crash dumps
     ulogger_flags_level_t flags_level; // Flags and level configuration
     const ulogger_mem_ctl_block_t *mcb_param; // Memory control block array
-    uint32_t mcb_len;           // Length of memory control block array
+    uint32_t mcb_len;           // Size of the memory control block array in BYTES -- sizeof(array), not an element count
     uint16_t pretrigger_log_count; // Number of pretrigger logs to keep in buffer
     uint8_t *pretrigger_buffer;  // Pointer to pretrigger buffer (user-allocated)
     uint16_t pretrigger_buffer_size; // Size of pretrigger buffer in bytes
@@ -97,7 +97,11 @@ typedef struct {
 /**
  * @brief Initialize the uLogger system
  * @param config Pointer to uLogger configuration structure
- * @return true on success, false if config is NULL
+ * @return true on success; false if config is NULL, or if mcb_param was supplied
+ *         but the memory layer refused it (see ulogger_mem_init's note on
+ *         mcb_len). In the latter case RAM logging is still initialised and
+ *         usable -- only the non-volatile store is unavailable -- so a caller
+ *         may choose to continue.
  *
  * This function must be called once during application initialization before
  * using any logging functions. It initializes the memory subsystem, pretrigger
@@ -133,6 +137,59 @@ void ulogger_set_flags_level(ulogger_flags_level_t *flags_level);
 void ulogger_clear_nv_logs(void);
 
 /**
+ * @brief Freeze the current NV log contents as the payload for one transfer.
+ *
+ * Call before ulogger_get_nv_log_usage() and
+ * ulogger_read_nv_logs_with_header() so the reported size, the buffer header
+ * and the trailing gap all describe the same snapshot. Frames logged after this
+ * call are excluded from the transfer and survive ulogger_consume_nv_logs().
+ *
+ * @return Total transfer size (header + log data + trailer), or 0 if empty.
+ */
+uint32_t ulogger_seal_nv_logs_for_transfer(void);
+
+/**
+ * @brief Discard the sealed snapshot after it has been delivered.
+ *
+ * Prefer this over ulogger_clear_nv_logs() on the transfer-complete path:
+ * clearing erases the whole region and destroys entries written while the
+ * transfer was in flight. Flash is erased only when the region drains or runs
+ * low on free space.
+ *
+ * @note The consume position lives in RAM, so a reset re-offers everything still
+ *       physically present in the region -- which now includes data already
+ *       delivered but not yet erased, since the FIFO no longer wipes on every
+ *       transfer. Expect duplicate delivery of up to a region's worth of entries
+ *       after a reset. That is the deliberate trade for not losing entries
+ *       written during the transfer window; a consumer that cannot tolerate
+ *       duplicates should de-duplicate on its own side, and cannot rely on tick
+ *       values to do it because the tick counter restarts at 0 on reset.
+ */
+void ulogger_consume_nv_logs(void);
+
+/**
+ * @brief Report NV log-store statistics
+ *
+ * Diagnostics for an integration that wants to see how the log store is
+ * behaving. Any pointer may be NULL.
+ *
+ * @param pending_bytes  Bytes not yet consumed by a completed transfer
+ * @param write_offset   Current append position within the region
+ * @param dropped_bytes  Cumulative bytes of log data that passed the level
+ *                       filter but never reached the consumer. Counts both
+ *                       causes: space reclaimed without room to relocate the
+ *                       retained tail (typically a region with no usable
+ *                       erase_granularity, so only a whole-region erase is
+ *                       available), and frames the region had no room for -- or
+ *                       the device refused to program -- at write time. Frames
+ *                       discarded by the level/module filter are deliberate and
+ *                       are not counted. Non-zero means log data was lost.
+ *                       Resets to 0 on ulogger_init().
+ */
+void ulogger_get_nv_stats(uint32_t *pending_bytes, uint32_t *write_offset,
+                          uint32_t *dropped_bytes);
+
+/**
  * Size in bytes of the buffer header serialized by ulogger_read_nv_logs_with_header(),
  * i.e. the number of leading bytes in that function's output before the raw log data
  * begins. Use this to size a fixed/static header-only buffer instead of hardcoding a
@@ -158,6 +215,36 @@ uint32_t ulogger_get_nv_log_usage(void);
 uint32_t ulogger_get_core_dump_size(void);
 
 /**
+ * @brief Why the crash dump handler was entered
+ *
+ * Recorded in every crash dump so that a capture taken from a non-fault context is not
+ * indistinguishable from a genuine CPU fault. A watchdog early-warning interrupt that branches
+ * into the fault handler, for instance, leaves the fault status registers clear, which is only
+ * weak evidence of what happened; this says so outright.
+ *
+ * ULOGGER_CRASH_CAUSE_FAULT is the default and is what a dump reports unless
+ * ulogger_crash_set_cause() is called.
+ */
+enum ULOGGER_CRASH_CAUSE {
+    ULOGGER_CRASH_CAUSE_FAULT    = 0,  // CPU took a fault
+    ULOGGER_CRASH_CAUSE_WATCHDOG = 1,  // hardware watchdog early-warning interrupt
+    ULOGGER_CRASH_CAUSE_ASSERT   = 2,  // failed assertion
+    ULOGGER_CRASH_CAUSE_APP_WDG  = 3,  // application-level liveness check
+};
+
+/**
+ * @brief Record why the crash dump handler is about to be entered
+ *
+ * Call this immediately before branching to HardFault_Handler from a non-fault context, such as a
+ * watchdog early-warning ISR. The value is written into the next crash dump and then reset to
+ * ULOGGER_CRASH_CAUSE_FAULT, so it can never be applied to a later genuine fault. It also starts
+ * at ULOGGER_CRASH_CAUSE_FAULT after every reset.
+ *
+ * @param cause One of ULOGGER_CRASH_CAUSE
+ */
+void ulogger_crash_set_cause(uint8_t cause);
+
+/**
  * @brief Read NV logs with header prepended, with support for chunked reads
  *
  * The complete output is a logical stream composed of the buffer header
@@ -177,6 +264,24 @@ uint32_t ulogger_get_core_dump_size(void);
  * @note Call ulogger_get_nv_log_usage() to obtain the total stream length.
  */
 uint32_t ulogger_read_nv_logs_with_header(void *dest, uint32_t max_bytes, uint32_t session_token, uint32_t read_offset);
+
+/**
+ * @brief Read raw NV log data, without the buffer header or trailer
+ * @param dest      Destination buffer
+ * @param max_bytes Capacity of dest
+ * @return Bytes written to dest, or 0 if there is nothing to read
+ *
+ * Legacy path. Prefer ulogger_read_nv_logs_with_header(): the seal/consume
+ * cycle is built around it, and only it emits the trailing-gap trailer the
+ * consumer needs to place the batch in time.
+ *
+ * @note Bounded by the snapshot taken by ulogger_seal_nv_logs_for_transfer(),
+ *       the same as the with_header variant, so mixing the two cannot read past
+ *       what was sealed. With no seal outstanding it returns everything pending.
+ *       It does not advance the read position -- call ulogger_consume_nv_logs()
+ *       once the data is safely delivered.
+ */
+uint32_t ulogger_read_nv_logs(void *dest, uint32_t max_bytes);
 
 /**
  * @brief Flush all pretrigger logs to NV memory
