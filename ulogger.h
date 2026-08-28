@@ -66,7 +66,7 @@ typedef enum {
  * @brief Configuration structure for uLogger system (for crash handler)
  */
 typedef struct {
-    void((*fault_reboot_cb)(void));  // callback to execute after a crash is captured. 
+    void((*fault_reboot_cb)(uint8_t cause));  // callback to execute after a crash is captured; cause is one of ULOGGER_CRASH_CAUSE
     const void*(*stack_top_address_cb)(ulogger_stack_type_t stack_type);  // Top of stack for crash dumps
     ulogger_flags_level_t flags_level; // Flags and level configuration
     const ulogger_mem_ctl_block_t *mcb_param; // Memory control block array
@@ -239,6 +239,9 @@ enum ULOGGER_CRASH_CAUSE {
  * watchdog early-warning ISR. The value is written into the next crash dump and then reset to
  * ULOGGER_CRASH_CAUSE_FAULT, so it can never be applied to a later genuine fault. It also starts
  * at ULOGGER_CRASH_CAUSE_FAULT after every reset.
+ *
+ * The same value is passed to fault_reboot_cb() once the dump is written, so an application that
+ * reboots differently for a watchdog than for a fault does not have to track the reason itself.
  *
  * @param cause One of ULOGGER_CRASH_CAUSE
  */
