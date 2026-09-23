@@ -119,6 +119,27 @@ bool ulogger_init(ulogger_config_t *config);
 void ulogger_log(uint32_t debug_module, uint8_t debug_level, const char *fmt, ...);
 
 /**
+ * @brief va_list form of ulogger_log()
+ *
+ * Identical frame, filtering and format-string handling to ulogger_log(); the
+ * arguments are supplied as a va_list instead, so logging can be forwarded from
+ * a wrapper or deferred to a worker thread. A va_list does not outlive the call
+ * that created it, so deferral means packaging the arguments at the call site and
+ * rebuilding a va_list when draining (e.g. Zephyr's cbpprintf_external()).
+ *
+ * fmt must still point at the original format string literal: the frame stores
+ * its address, and the cloud decoder resolves it from the ELF.
+ *
+ * As with vprintf(), ap is consumed; the caller still owns it and must va_end() it.
+ *
+ * @param debug_module Bit mask indicating the module (0x01-0x80000000)
+ * @param debug_level Log level (use ULOGGER_DEBUG_LEVEL enum values)
+ * @param fmt Printf-style format string
+ * @param ap Arguments matching the format string
+ */
+void ulogger_vlog(uint32_t debug_module, uint8_t debug_level, const char *fmt, va_list ap);
+
+/**
  * @brief Set the flags and level configuration
  * @param flags_level Pointer to flags/level configuration structure
  * 
