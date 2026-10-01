@@ -1,6 +1,6 @@
 # uLogger Library Integration Guide
 
-Agent version: **v1.2.4** (see `ulogger_version.h`)
+Agent version: **v1.2.6** (see `ulogger_version.h`)
 
 ## Overview
 
@@ -206,8 +206,12 @@ static const void *stack_top_cb(ulogger_stack_type_t stack_type) {
     return (const void *)&__StackTop;
 }
 
-static void fault_reboot(void) {
-    NVIC_SystemReset();   // Called once the crash dump has been captured.
+static void fault_reboot(uint8_t cause) {
+    // Called once the crash dump has been captured. `cause` is one of
+    // ULOGGER_CRASH_CAUSE, so you can recover differently from a watchdog
+    // bite than from a CPU fault.
+    (void)cause;
+    NVIC_SystemReset();
 }
 
 static ulogger_config_t g_ulogger_config = {
@@ -247,7 +251,7 @@ void main(void) {
 #### Callbacks
 
 - **`stack_top_address_cb`** replaces the old fixed `stack_top_address` field. It is called with `ULOGGER_STACK_TYPE_MSP` or `ULOGGER_STACK_TYPE_PSP` and returns the top of that stack, so a dump can be taken correctly whichever stack was active at the fault.
-- **`fault_reboot_cb`** runs after a crash has been captured — use it to reset the device.
+- **`fault_reboot_cb`** runs after a crash has been captured — use it to reset the device. It receives the crash cause (one of `ULOGGER_CRASH_CAUSE`, the same value `ulogger_crash_set_cause()` records), so an application that reboots differently for a watchdog than for a fault does not have to track the reason itself. **This signature changed in v1.2.5** — see Notes if you are upgrading from v1.2.4 or earlier.
 - **`get_tick`** returns your raw hardware tick counter and **`tick_rate_hz`** tells the library how to convert it to real time. **`get_epoch_us`** is optional: it returns Unix epoch microseconds (UTC) sampled at the same instant as `get_tick()` at report-generation time. Leaving it `NULL` means cloud ingestion falls back to its own receive-time approximation for absolute timestamps.
 
 #### `mcb_len` is a byte count
@@ -299,6 +303,23 @@ static void local_sink(uint32_t module, uint8_t level, const char *fmt, va_list 
 
 register_local_log_callback(local_sink);
 ```
+
+#### Forwarding from your own wrapper
+
+`ulogger_vlog()` is the `va_list` form of `ulogger_log()`, for when logging is funnelled through a wrapper of your own:
+
+```c
+void my_log(uint32_t module, uint8_t level, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    ulogger_vlog(module, level, fmt, ap);
+    va_end(ap);
+}
+```
+
+Filtering, frame layout and format-string handling are identical to `ulogger_log()`. Two constraints carry over. `fmt` must still be the original format string **literal**, because the frame stores its address and the cloud decoder resolves the text from the ELF. And as with `vprintf()`, `ap` is consumed by the call — the caller still owns it and must `va_end()` it.
+
+A `va_list` does not outlive the call that created it, so deferring a log to a worker thread is not a matter of storing the `va_list`: package the arguments at the call site and rebuild one when draining (e.g. Zephyr's `cbpprintf_external()`).
 
 ### 8. Record Metrics and Heartbeats
 
@@ -425,6 +446,7 @@ The value is written into the next crash dump and then reset to `ULOGGER_CRASH_C
 - **Metrics and Heartbeat**: Named float/signed/unsigned metrics, always persisted
 - **Memory Types**: Separate storage regions for debug logs, crash dumps and OTA patches
 - **Page-granular reclaim**: Optional `erase_granularity` lets the log store reclaim space a page at a time instead of wiping the whole region
+- **Wrapper-friendly logging**: `ulogger_vlog()` accepts a `va_list`, so application logging can be funnelled through your own front end
 
 ## Notes
 
@@ -434,3 +456,4 @@ The value is written into the next crash dump and then reset to `ULOGGER_CRASH_C
 - Memory addresses must not overlap between debug log and stack trace regions
 - Pretrigger buffer is optional but strongly recommended for crash analysis
 - Use `ulogger_consume_nv_logs()`, not `ulogger_clear_nv_logs()`, to complete a log transfer
+- **Upgrading from v1.2.4 or earlier:** `fault_reboot_cb` gained a `uint8_t cause` parameter in v1.2.5. Assigning your old `void (*)(void)` handler to it is only a `-Wincompatible-pointer-types` *warning* under default GCC flags, so without `-Werror` the build succeeds and then calls through a mismatched function pointer at crash time. Update the handler's signature when you take this version
